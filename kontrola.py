@@ -79,6 +79,7 @@ $f = [ordered]@{
   komputer = $env:COMPUTERNAME
   uzytkownik = "$env:USERDOMAIN\$env:USERNAME"
   admin = $adm
+  w_adminach = [bool](Proba { & "$env:SystemRoot\System32\whoami.exe" /groups /fo csv | Select-String -SimpleMatch 'S-1-5-32-544' })
   w_domenie = [bool]$cs.PartOfDomain
   domena = $cs.Domain
   system = $os.Caption
@@ -196,7 +197,7 @@ def analizuj(f, teraz):
     df = f.get("defender") or {}
     inne = [a for a in lista(f.get("antywirusy")) if "defender" not in (a.get("nazwa") or "").lower()]
     inne_wl = [a for a in inne if stan_av(a.get("stan") or 0)[0]]
-    if df.get("wlaczony") and df.get("czas_rzeczywisty") and df.get("tryb", "Normal") != "Passive mode":
+    if df.get("wlaczony") and df.get("czas_rzeczywisty") and "passive" not in (df.get("tryb") or "").lower():
         dodaj("Antywirus", "Microsoft Defender – ochrona w czasie rzeczywistym włączona", "OK")
         sygn = data(df.get("sygnatury"))
         if sygn is None or (teraz - sygn).days > MAX_DNI_SYGNATUR:
@@ -242,9 +243,9 @@ def analizuj(f, teraz):
         dodaj("Aktualizacje Windows", "ostatnia instalacja %s (%d dni temu)" % (akt.strftime("%Y-%m-%d"), dni),
               "UWAGA" if dni > MAX_DNI_AKTUALIZACJI else "OK",
               "Uruchom Windows Update i zainstaluj zaległe aktualizacje.")
-    if f.get("restart"):
-        dodaj("Restart po aktualizacjach", "wymagany", "UWAGA",
-              "Uruchom komputer ponownie, aby dokończyć instalację aktualizacji.")
+    dodaj("Restart po aktualizacjach", "wymagany" if f.get("restart") else "niewymagany",
+          "UWAGA" if f.get("restart") else "OK",
+          "Uruchom komputer ponownie, aby dokończyć instalację aktualizacji.")
 
     # szyfrowanie i rozruch
     for b in lista(f.get("bitlocker")):
@@ -273,7 +274,8 @@ def analizuj(f, teraz):
     ja = (f.get("uzytkownik") or "").lower()
     if admini:
         nazwy = ", ".join(a["nazwa"] for a in admini)
-        jestem = any(a["nazwa"].lower() == ja for a in admini)
+        # bezposrednio albo przez grupe (whoami /groups widzi tez grupy domenowe zagniezdzone)
+        jestem = f.get("w_adminach") or any(a["nazwa"].lower() == ja for a in admini)
         dodaj("Lokalni administratorzy", nazwy, "UWAGA" if jestem else "OK",
               "Zalogowany użytkownik (%s) ma uprawnienia administratora. Do codziennej pracy używaj "
               "konta bez tych uprawnień." % f.get("uzytkownik"))
@@ -305,9 +307,8 @@ def analizuj(f, teraz):
     smb1 = f.get("smb1")
     dodaj("SMB 1.0", "włączony" if smb1 == 1 else "wyłączony", "UWAGA" if smb1 == 1 else "OK",
           "Wyłącz: Funkcje systemu Windows → Obsługa udostępniania plików SMB 1.0/CIFS.")
-    if f.get("psv2") == 1:
-        dodaj("Windows PowerShell 2.0", "włączony", "UWAGA",
-              "Wyłącz: Funkcje systemu Windows → Windows PowerShell 2.0.")
+    dodaj("Windows PowerShell 2.0", "włączony" if f.get("psv2") == 1 else "wyłączony / niedostępny",
+          "UWAGA" if f.get("psv2") == 1 else "OK", "Wyłącz: Funkcje systemu Windows → Windows PowerShell 2.0.")
     lsa = f.get("lsa")
     dodaj("Ochrona LSA (haseł w pamięci)", "włączona" if lsa in (1, 2) else "wyłączona",
           "OK" if lsa in (1, 2) else "UWAGA",
@@ -590,7 +591,10 @@ def selftest():
     assert oc["System operacyjny"][1].endswith("wsparcie do 2027-10-12")
     assert oc["Automatyczna blokada ekranu"][1] == "po 10 min"
     assert oc["Szyfrowanie BitLocker C:"][1] == "włączony" and oc["LAPS (hasło lokalnego administratora)"][2] == "OK"
-    assert "Windows PowerShell 2.0" not in oc
+    assert oc["Windows PowerShell 2.0"][2] == "OK" and oc["Restart po aktualizacjach"][2] == "OK"
+    # admin przez grupe domenowa (nie ma go wprost na liscie) - z whoami /groups
+    oc = {w[0]: w for w in analizuj(dict(dobry, w_adminach=True), teraz)}
+    assert oc["Lokalni administratorzy"][2] == "UWAGA"
 
     zly = dict(dobry, system="Microsoft Windows 10 Pro", kompilacja="19045", aktualizacja=iso(80), restart=True,
                defender={"wlaczony": False, "czas_rzeczywisty": False, "sygnatury": iso(30), "tryb": "Normal",
@@ -623,7 +627,7 @@ def selftest():
     assert "jkowalska" in oc["Lokalni administratorzy"][3]
 
     # antywirus innej firmy, Defender pasywny; BitLocker przez Get-BitLockerVolume
-    inny = dict(dobry, defender={"wlaczony": True, "czas_rzeczywisty": False, "tryb": "Passive mode"},
+    inny = dict(dobry, defender={"wlaczony": True, "czas_rzeczywisty": False, "tryb": "Passive Mode"},
                 antywirusy=[{"nazwa": "Windows Defender", "stan": 393472}, {"nazwa": "ESET Security", "stan": 266240}],
                 bitlocker={"dysk": "C:", "stan": 1, "ochrona": "Off"})
     oc = {w[0]: w for w in analizuj(inny, teraz)}
