@@ -435,11 +435,11 @@ def zapisz_zestawienie(f, wiersze, teraz, sciezka):
     wb.save(sciezka)
 
 
-def run(out_dir, log, zrodlo=None):
+def run(out_dir, log, zrodlo=None, teraz=None):
     """Kontrola, raport HTML, wiersz w zestawieniu. Zwraca (fakty, wiersze, plik_html)."""
     log("Sprawdzanie ustawien komputera ...")
     f = (zrodlo or zbierz)()
-    teraz = datetime.datetime.now()
+    teraz = teraz or datetime.datetime.now()  # selftest podaje stala date (dane testowe sa wzgledem niej)
     wiersze = analizuj(f, teraz)
     uwagi = sum(1 for w in wiersze if w[2] == "UWAGA")
     log("%s: %d kontroli, %d z UWAGA" % (f.get("komputer"), len(wiersze), uwagi))
@@ -642,12 +642,12 @@ def selftest():
     # raporty: HTML + zestawienie (aktualizacja wiersza, nowa kolumna)
     tmp = tempfile.mkdtemp()
     lines = []
-    f1, w1, plik = run(tmp, lines.append, zrodlo=lambda: dobry)
+    f1, w1, plik = run(tmp, lines.append, teraz=teraz, zrodlo=lambda: dobry)
     assert all(ord(ch) < 128 for line in lines for ch in line), lines
     tresc = open(plik, encoding="utf-8").read()
     assert "UG-PC-001" in tresc and "UWAGA: 0" in tresc and "&lt;" not in tresc
-    run(tmp, lines.append, zrodlo=lambda: dict(zly, komputer="UG-PC-002"))
-    run(tmp, lines.append, zrodlo=lambda: dict(dobry, smb1=1))  # ponownie PC-001: zastapic wiersz
+    run(tmp, lines.append, teraz=teraz, zrodlo=lambda: dict(zly, komputer="UG-PC-002"))
+    run(tmp, lines.append, teraz=teraz, zrodlo=lambda: dict(dobry, smb1=1))  # ponownie PC-001: zastapic wiersz
     ws = openpyxl.load_workbook(os.path.join(tmp, "zestawienie.xlsx")).active
     assert [ws.cell(r, 1).value for r in range(2, ws.max_row + 1)] == ["UG-PC-001", "UG-PC-002"]
     nag = [c.value for c in ws[1]]
